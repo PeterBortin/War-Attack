@@ -9,7 +9,7 @@
   canvas { display: block; }
   .drone-toolbar {
     position: absolute;
-    top: 10px; /* Adjusted initial position, real pos calculated later */
+    top: 10px;
     left: 50%;
     transform: translateX(-50%);
     color: white;
@@ -20,12 +20,28 @@
     border-radius: 4px;
     pointer-events: none;
   }
+  #score-counter {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    color: white;
+    font-family: monospace;
+    font-size: 20px;
+    background: rgba(0,0,0,0.5);
+    padding: 5px 10px;
+    border-radius: 4px;
+  }
 </style>
 </head>
 <body>
+<div id="score-counter">0</div>
 <canvas id="canvas"></canvas>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// === Global Variables ===
+let score = 0;
+const GRID_SIZE = 20;
+
 // === Scene setup ===
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(64, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -39,7 +55,7 @@ const renderer = new THREE.WebGLRenderer({canvas: document.getElementById("canva
 renderer.setSize(window.innerWidth, window.innerHeight);
 
 // === Grid ===
-const gridHelper = new THREE.GridHelper(20, 20, 0xffffff, 0x444444);
+const gridHelper = new THREE.GridHelper(GRID_SIZE, 20, 0xffffff, 0x444444);
 scene.add(gridHelper);
 
 // === Roads ===
@@ -50,6 +66,7 @@ function createRoad(x, z, w, h){
   const road = new THREE.Mesh(roadGeometry, roadMaterial);
   road.rotation.x = -Math.PI/2;
   road.position.set(x,0.005,z);
+  road.userData = {isRoad: true}; // Добавляем метку, чтобы маркер был выше
   scene.add(road);
   roads.push({mesh:road, w, h, x, z});
 }
@@ -62,6 +79,8 @@ createRoad(0, 5, 20, 1);
 createRoad(0, -5, 20, 1);
 createRoad(5, 0, 1, 20);
 createRoad(-5, 0, 1, 20);
+createRoad(0, 8, 20, 1);
+createRoad(8, 0, 1, 20);
 
 // === Radar Gradient ===
 const radarSize = 512;
@@ -108,15 +127,14 @@ const pvo = new THREE.Mesh(pvoGeometry,pvoMaterial);
 pvo.position.set(0,0.25,0);
 scene.add(pvo);
 
-// === Houses ===
+// === Houses (unchanged) ===
 let houses = [];
-// Увеличено количество домов до 80 (было 64) для более плотной застройки
-function spawnHouses(count=80){
+function spawnHouses(count=120){
   houses = [];
-  const gridSize = 8;
+  const gridSize = 10;
   const sectorSize = 20 / gridSize;
   const positions = [];
-  const minSpacing = 1.5;
+  const minSpacing = 1.2;
 
   for(let sx = 0; sx < gridSize; sx++){
     for(let sz = 0; sz < gridSize; sz++){
@@ -134,7 +152,6 @@ function spawnHouses(count=80){
     const x = pos.x + (Math.random() - 0.5) * sectorSize * 0.5;
     const z = pos.z + (Math.random() - 0.5) * sectorSize * 0.5;
     
-    // Более сложные формы домов (до 3 блоков)
     const blocks = [];
     const numBlocks = Math.random() < 0.3 ? 3 : (Math.random() < 0.6 ? 2 : 1); 
     
@@ -149,7 +166,7 @@ function spawnHouses(count=80){
       const wingW = Math.random() * 0.6 + 0.6;
       const wingD = Math.random() * 0.6 + 0.6;
       const wingH = Math.random() * 1.0 + 0.5;
-      const posIndex = Math.floor(Math.random() * 4); // 0: +X, 1: -X, 2: +Z, 3: -Z
+      const posIndex = Math.floor(Math.random() * 4);
       let dx = 0, dz = 0;
       if (posIndex === 0) dx = mainW / 2 + wingW / 2;
       else if (posIndex === 1) dx = -(mainW / 2 + wingW / 2);
@@ -170,7 +187,6 @@ function spawnHouses(count=80){
         const newDx = posIndex2 === 0 ? mainW / 2 + wing2W / 2 : (posIndex2 === 1 ? -(mainW / 2 + wing2W / 2) : 0);
         const newDz = posIndex2 === 2 ? mainD / 2 + wing2D / 2 : (posIndex2 === 3 ? -(mainD / 2 + wing2D / 2) : 0);
         
-        // Check if the second wing is not too close/overlapping the first wing's position
         if (numBlocks === 2 || blocks.length < 2 || Math.abs(newDx - blocks[1].dx) > (wing2W/2 + blocks[1].w/2) || Math.abs(newDz - blocks[1].dz) > (wing2D/2 + blocks[1].d/2)) {
             dx2 = newDx;
             dz2 = newDz;
@@ -180,7 +196,6 @@ function spawnHouses(count=80){
       blocks.push({w: wing2W, d: wing2D, h: wing2H, dx: dx2, dz: dz2});
     }
 
-    // Проверка, чтобы дом не попадал на дорогу
     let onRoad = false;
     let maxHouseW = 0;
     let maxHouseD = 0;
@@ -197,7 +212,6 @@ function spawnHouses(count=80){
     }
     if(onRoad) continue;
 
-    // Проверка на столкновение с другими домами
     let tooClose = false;
     for(const house of houses){
       const dist = Math.sqrt((x - house.position.x)**2 + (z - house.position.z)**2);
@@ -228,7 +242,8 @@ function spawnHouses(count=80){
 }
 spawnHouses();
 
-// === Drones ===
+// === Drones (unchanged logic) ===
+const DRONE_SIZE = 0.1; 
 const drones = [];
 const trails = [];
 function createDrone(type="white"){
@@ -236,7 +251,7 @@ function createDrone(type="white"){
   if(type === "red") color = 0xff0000;
   else if(type === "white") color = 0xffffff;
   else if(type === "scout") color = 0x0000ff;
-  const drone = new THREE.Mesh(new THREE.SphereGeometry(0.1,12,12), new THREE.MeshBasicMaterial({color}));
+  const drone = new THREE.Mesh(new THREE.SphereGeometry(DRONE_SIZE,12,12), new THREE.MeshBasicMaterial({color}));
   
   let targetHouse = null;
   if(type==="red" && houses.length>0){
@@ -329,10 +344,10 @@ function createDrone(type="white"){
 
 // === Scene Parameters ===
 let targetRedDrones = 2;
-let targetWhiteDrones = 5;
-let targetScoutDrones = 3;
-let missileInterval = 16000; // Интервал для баллистической ракеты
-let cruiseMissileInterval = 10000; // Интервал для крылатой ракеты (чаще)
+let targetWhiteDrones = 3;
+let targetScoutDrones = 1;
+let missileInterval = 16000;
+let cruiseMissileInterval = 10000;
 let lastMissileTime = Date.now();
 let lastCruiseMissileTime = Date.now();
 let lastScoutTime = Date.now();
@@ -340,40 +355,84 @@ let lastScoutTime = Date.now();
 // Initialize drones
 for(let i=0;i<targetWhiteDrones;i++){createDrone("white");}
 for(let i=0;i<targetRedDrones;i++){createDrone("red");}
+for(let i=0;i<targetScoutDrones;i++){createDrone("scout");}
+
+// === Missile Target Marker (Ballistic) ===
+const MARKER_DURATION = 5000; // 5 seconds
+const INITIAL_MARKER_RADIUS = GRID_SIZE / 4; // 20 / 4 = 5.0
+const FINAL_MARKER_RADIUS = 0.05; // Final tiny spot
+
+const targetMarkerGeometry = new THREE.CircleGeometry(1, 64); // Base size 1
+const targetMarkerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.2, side: THREE.DoubleSide }); 
+const targetMarker = new THREE.Mesh(targetMarkerGeometry, targetMarkerMaterial);
+targetMarker.rotation.x = -Math.PI/2;
+// Поднимаем маркер чуть выше сетки (Y=0.0) и дорог/радара (Y=0.01)
+targetMarker.position.y = 0.02; 
+targetMarker.scale.set(0, 0, 0);
+scene.add(targetMarker);
+let markerTargetPos = new THREE.Vector3(0, 0, 0);
+let markerStartTime = 0;
+let markerActive = false;
+let missileToTrack = null;
 
 // === Missiles (Ballistic) ===
+const BALLISTIC_MISSILE_SIZE = 0.5; 
 const missiles = [];
 function createMissile() {
   const missile = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.5, 12), new THREE.MeshBasicMaterial({color: 0xff0000}));
   missile.rotation.x = Math.PI;
   const x = (Math.random() - 0.5) * 20;
   const z = (Math.random() - 0.5) * 20;
-  const startY = 8;
+  const startY = 8 + Math.random()*2;
   missile.position.set(x, startY, z);
-  missile.userData = {speed: 0.2, trail: [], isFalling: false, type: "ballistic"};
+  
+  const endX = (Math.random() - 0.5) * 20;
+  const endZ = (Math.random() - 0.5) * 20;
+  const destination = new THREE.Vector3(endX, 0, endZ);
+  
+  const speed = 0.2; 
+  const fallTimeMs = startY / speed * (1000/60); // Total fall time in ms (at 60 FPS)
+  
+  missile.userData = {
+    speed: speed, 
+    trail: [], 
+    type: "ballistic",
+    targetPos: destination,
+    fallTimeMs: fallTimeMs,
+    startTime: Date.now()
+  };
   scene.add(missile);
   missiles.push(missile);
+  
+  // Activate marker for this missile if none is active
+  if(!markerActive){
+      markerActive = true;
+      missileToTrack = missile;
+      markerTargetPos.copy(destination);
+      targetMarker.position.set(markerTargetPos.x, 0.02, markerTargetPos.z); // Обновленная позиция Y
+      markerStartTime = Date.now();
+      targetMarker.scale.setScalar(INITIAL_MARKER_RADIUS);
+      targetMarker.material.opacity = 0.2;
+  }
 }
 
-// === Cruise Missiles (КР) ===
+// === Cruise Missiles (КР) - Color changed to white ===
+const CRUISE_MISSILE_SIZE = 0.1; 
 const cruiseMissiles = [];
 function createCruiseMissile() {
-  // ИЗМЕНЕНИЕ 1: Геометрия как у дрона (сфера)
-  // ИЗМЕНЕНИЕ 2: Цвет - желто-оранжевый
-  const missile = new THREE.Mesh(new THREE.SphereGeometry(0.1, 12, 12), new THREE.MeshBasicMaterial({color: 0xffaa00}));
+  // КР теперь белая (0xffffff)
+  const missile = new THREE.Mesh(new THREE.SphereGeometry(CRUISE_MISSILE_SIZE, 12, 12), new THREE.MeshBasicMaterial({color: 0xffffff}));
   
-  // Выбор начальной точки на краю карты
   let startX, startZ;
-  const startEdge = Math.floor(Math.random() * 4); // 0: -X, 1: +X, 2: -Z, 3: +Z
+  const startEdge = Math.floor(Math.random() * 4);
   if (startEdge === 0) { startX = -10; startZ = (Math.random() - 0.5) * 20; }
   else if (startEdge === 1) { startX = 10; startZ = (Math.random() - 0.5) * 20; }
   else if (startEdge === 2) { startX = (Math.random() - 0.5) * 20; startZ = -10; }
   else { startX = (Math.random() - 0.5) * 20; startZ = 10; }
   
-  const startY = 5 + Math.random() * 2; // Горизонтальный полет на средней высоте
+  const startY = 5 + Math.random() * 2;
   missile.position.set(startX, startY, startZ);
 
-  // Выбор цели (дома)
   const availableHouses = houses.filter(h => !h.userData.isHit);
   let targetHouse = null;
   if (availableHouses.length > 0) {
@@ -397,21 +456,14 @@ function createCruiseMissile() {
 
   const curve = new THREE.CubicBezierCurve3(missile.position.clone(), control1, control2, endPos);
   
-  // ИЗМЕНЕНИЕ 3: Убрана установка начального поворота для сферы
-  // const rotation = new THREE.Quaternion().setFromUnitVectors(
-  //     new THREE.Vector3(0, 0, 1), 
-  //     curve.getTangent(0).normalize()
-  // );
-  // missile.quaternion.copy(rotation);
-
   missile.userData = {
     type: "cruise",
-    speed: 0.005, // Скорость вдоль кривой (0.0 - 1.0)
+    speed: 0.005,
     baseSpeed: 0.005,
     curve: curve,
     t: 0,
     trail: [],
-    target: targetHouse // Сохраняем цель
+    target: targetHouse
   };
   
   scene.add(missile);
@@ -420,10 +472,11 @@ function createCruiseMissile() {
 
 
 // === Rockets (PVO) ===
+const ROCKET_SIZE = 0.1;
 const rockets = [];
 function launchRocket(target){
   if(!target) return;
-  const rocket = new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8), new THREE.MeshBasicMaterial({color:0xffff00}));
+  const rocket = new THREE.Mesh(new THREE.SphereGeometry(ROCKET_SIZE,8,8), new THREE.MeshBasicMaterial({color:0xffff00}));
   rocket.position.copy(pvo.position);
   rocket.userData = {
     target,
@@ -435,29 +488,101 @@ function launchRocket(target){
   rockets.push(rocket);
 }
 
-// === Explosion ===
-function createExplosion(position, scaleFactor=1, isMissile=false){
-  const geometry = isMissile ? new THREE.SphereGeometry(0.1,16,16,0,Math.PI*2,0,Math.PI/2) : new THREE.SphereGeometry(0.1,16,16);
-  const explosion = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9}));
-  explosion.position.copy(position);
-  if(isMissile) explosion.position.y = 0.01;
-  scene.add(explosion);
+// === Score Update Function ===
+const scoreCounter = document.getElementById('score-counter');
+function updateScore(points = 1) {
+    score += points;
+    // Убираем слово "Сбито:"
+    scoreCounter.textContent = `${score}`;
+}
+
+// === Explosion (Realistic) ===
+function createExplosion(position, type="drone", sizeFactor=1){
+  let initialRadius, maxRadius, blastRadius;
   
-  let scale = 0.1 * scaleFactor;
+  if (type === "drone" || type === "rocket") {
+    // 6 times the diameter (0.2 for drone, 0.2 for rocket)
+    maxRadius = 0.6 * sizeFactor;
+    blastRadius = 2.0; 
+  } else if (type === "missile") {
+    // 12 times the diameter (0.5 for ballistic missile, 0.2 for cruise)
+    maxRadius = 1.2 * sizeFactor; 
+    blastRadius = 3.0;
+  } else {
+    maxRadius = 0.5 * sizeFactor;
+    blastRadius = 1.5;
+  }
+
+  initialRadius = 0.05; 
+  
+  const geometry = new THREE.SphereGeometry(1, 16, 16); 
+  
+  // Эффект яркой вспышки (Hot Core)
+  const flash = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color:0xffaa00, transparent:true, opacity:0.9}));
+  flash.position.copy(position);
+  if(position.y < 0.2) flash.position.y = 0.01;
+  scene.add(flash);
+  
+  // Эффект дыма/остывающего пламени (Smoke/Afterglow)
+  const smoke = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color:0xaa0000, transparent:true, opacity:0.05})); 
+  smoke.position.copy(position);
+  if(position.y < 0.2) smoke.position.y = 0.01;
+  scene.add(smoke);
+
+  const duration = type === "missile" ? 60 : 40; // 3 seconds vs 2 seconds
+  let frame = 0;
+
   const interval = setInterval(()=>{
-    scale += 0.4 * scaleFactor;
-    explosion.scale.setScalar(scale);
-    explosion.material.opacity -= 0.05;
-    if(explosion.material.opacity <=0){
-      scene.remove(explosion);
-      // Безопасное удаление геометрии и материалов
+    frame++;
+    const progress = frame / duration;
+
+    // Phase 1: Rapid expansion and peak (0% to 50% progress)
+    if(progress <= 0.5){
+        const phaseProgress = progress * 2; // 0 to 1
+        
+        // Flash: quick expansion, quick decay
+        const flashScale = initialRadius + (maxRadius * 0.5 - initialRadius) * phaseProgress;
+        flash.scale.setScalar(flashScale);
+        flash.material.opacity = 0.9 - 0.9 * phaseProgress; // Rapid fade
+        
+        // Smoke: expansion and gradual increase in opacity
+        const smokeScale = initialRadius + (maxRadius * 0.9 - initialRadius) * phaseProgress; 
+        smoke.scale.setScalar(smokeScale);
+        smoke.material.opacity = 0.05 + (0.5 - 0.05) * phaseProgress; // Gradual density
+    }
+    // Phase 2: Smoke reaches max size and dissipates (50% to 100% progress)
+    else if(progress > 0.5 && progress <= 1){
+        const phaseProgress = (progress - 0.5) * 2; // 0 to 1
+        
+        // Flash: ensure it's gone
+        flash.material.opacity = 0; 
+
+        // Smoke: reaches max scale and fades to zero
+        const smokeScale = maxRadius * 0.9 + (maxRadius - maxRadius * 0.9) * phaseProgress; 
+        smoke.scale.setScalar(smokeScale);
+        smoke.material.opacity = 0.5 - 0.5 * phaseProgress; // Fade to zero at max diameter
+    }
+    // Phase 3: Cleanup ( > 100% progress)
+    else {
+        flash.material.opacity = 0;
+        smoke.material.opacity = 0; 
+    }
+
+    if(progress >= 1){
+      scene.remove(flash);
+      scene.remove(smoke);
+      
       try{
-        explosion.geometry.dispose();
-        explosion.material.dispose();
+        flash.geometry.dispose();
+        flash.material.dispose();
+        smoke.geometry.dispose();
+        smoke.material.dispose();
       }catch(e){/*ignore*/}
       clearInterval(interval);
     }
-  },50);
+  },50); // 20 FPS animation
+  
+  applyBlastDamage(position, blastRadius, type==="missile");
 }
 
 // === Marker functions (unchanged) ===
@@ -553,13 +678,15 @@ function createPersonMarker(person, isMissileHit = false){
   person.userData.marker = line;
 }
 
-// === Trail helper ===
+// === Trail helper (КР теперь имеет красный след) ===
 function addTrail(object, isMissile=false, isRocket=false, isCruise=false){
   const isScout = !isMissile && !isRocket && !isCruise && object.userData.type === "scout";
   const isDivingRed = !isMissile && !isRocket && !isCruise && object.userData.type === "red" && object.userData.diving;
   const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8);
-  // Используем 0xffaa00 для КР, как и для самой КР
-  const trailColor = isRocket ? 0xffff00 : (isMissile ? 0xff0000 : 0xffaa00);
+  
+  // След КР теперь красный, как у баллистической
+  const trailColor = isRocket ? 0xffff00 : 0xff0000; 
+  
   const trailMat = new THREE.MeshBasicMaterial({
     color: trailColor,
     transparent: true,
@@ -573,13 +700,12 @@ function addTrail(object, isMissile=false, isRocket=false, isCruise=false){
   trails.push(object.userData.trail[object.userData.trail.length-1]);
 }
 
-// === Cars (unchanged) ===
+// === Traffic (unchanged) ===
 const cars = [];
-function spawnCars(){
+function spawnCars(numPerRoad = 6){
   roads.forEach(road=>{
     const isHorizontal = road.w > road.h;
-    const numCars = 2;
-    for(let i=0;i<numCars;i++){
+    for(let i=0;i<numPerRoad;i++){
       const car = new THREE.Mesh(new THREE.BoxGeometry(0.4,0.2,0.4), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
       const speed = 0.01 + Math.random()*0.02;
       if(isHorizontal){
@@ -616,15 +742,12 @@ function spawnSingleCar(road){
   return car;
 }
 
-// === People ===
 const people = [];
-function spawnPeople(){
+function spawnPeople(numPerRoad = 8){
   roads.forEach(road=>{
     const isHorizontal = road.w > road.h;
-    const numPeople = 4;
-    for(let i=0;i<numPeople;i++){
+    for(let i=0;i<numPerRoad;i++){
       const person = new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.2), new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.5}));
-      // Slower speed: divided by 16 instead of 8 
       const baseSpeed = (0.01 + Math.random()*0.02) / 16;
       let startX, startZ, endX, endZ;
       if(isHorizontal){
@@ -642,9 +765,9 @@ function spawnPeople(){
       const startPos = person.position.clone();
       const endPos = new THREE.Vector3(endX, 0.05, endZ);
       const control1 = new THREE.Vector3(
-        startX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+        startPos.x + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
         0.05,
-        startZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+        startPos.z + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
       );
       const control2 = new THREE.Vector3(
         endX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
@@ -690,9 +813,9 @@ function spawnSinglePerson(road){
   const startPos = person.position.clone();
   const endPos = new THREE.Vector3(endX, 0.05, endZ);
   const control1 = new THREE.Vector3(
-    startX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
+    startPos.x + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
     0.05,
-    startZ + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
+    startPos.z + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5
   );
   const control2 = new THREE.Vector3(
     endX + (Math.random() - 0.5) * (isHorizontal ? road.w : road.h) * 0.5,
@@ -716,7 +839,6 @@ function spawnSinglePerson(road){
   return person;
 }
 
-// === Traffic Updates (unchanged) ===
 function updateCars(){
   const safeDistance = 1.0;
   const accel = 0.0005;
@@ -800,12 +922,10 @@ function updatePeople(){
       data.speed = Math.min(data.baseSpeed, data.speed + accel);
     }
 
-    // Update position along Bezier curve
     if(data.t < 1){
       data.t = Math.min(data.t + data.speed, 1);
       person.position.copy(data.curve.getPoint(data.t));
     } else {
-      // Create new Bezier curve when reaching the end
       const startPos = person.position.clone();
       const endX = data.isHorizontal ? data.road.x - data.road.w/2 + Math.random()*data.road.w : data.road.x;
       const endZ = data.isHorizontal ? data.road.z : data.road.z - data.road.h/2 + Math.random()*data.road.h;
@@ -827,14 +947,13 @@ function updatePeople(){
   }
 }
 
-// === Unified blast damage (score updates removed previously) ===
+// === Unified blast damage (unchanged) ===
 function applyBlastDamage(center, blastRadius = 3, isMissile = false){
   for(let j = houses.length - 1; j >= 0; j--){
     const house = houses[j];
     if(house.userData.isHit) continue;
     const dist = Math.sqrt((house.position.x - center.x)**2 + (house.position.z - center.z)**2);
     if(dist < blastRadius){
-      createExplosion(house.position, 1, isMissile);
       createHouseMarker(house, isMissile);
     }
   }
@@ -843,7 +962,6 @@ function applyBlastDamage(center, blastRadius = 3, isMissile = false){
     if(car.userData.isHit) continue;
     const dist = Math.sqrt((car.position.x - center.x)**2 + (car.position.z - center.z)**2);
     if(dist < blastRadius){
-      createExplosion(car.position, 0.5, isMissile);
       createCarMarker(car, isMissile);
       spawnSingleCar(car.userData.road);
     }
@@ -853,16 +971,37 @@ function applyBlastDamage(center, blastRadius = 3, isMissile = false){
     if(person.userData.isHit) continue;
     const dist = Math.sqrt((person.position.x - center.x)**2 + (person.position.z - center.z)**2);
     if(dist < blastRadius){
-      createExplosion(person.position, 0.25, isMissile);
       createPersonMarker(person, isMissile);
       spawnSinglePerson(person.userData.road);
     }
   }
 }
 
-// === Score (removed previously) ===
-let score = 0;
-function updateScore(){/*document.getElementById("score").innerText = `${String(score).padStart(3,'0')}`;*/}
+// === Trail helper (КР теперь имеет красный след) ===
+function addTrail(object, isMissile=false, isRocket=false, isCruise=false){
+  const isScout = !isMissile && !isRocket && !isCruise && object.userData.type === "scout";
+  const isDivingRed = !isMissile && !isRocket && !isCruise && object.userData.type === "red" && object.userData.diving;
+  
+  // Размер частиц: 0.08 для ракет/кр, 0.1 для скаутов/пво
+  const trailGeo = new THREE.SphereGeometry(isScout ? 0.1 : (isRocket ? 0.1 : 0.08), 8, 8);
+  
+  // След КР (cruise) теперь красный, как у баллистической (missile)
+  const trailColor = isRocket ? 0xffff00 : 0xff0000; 
+  
+  const trailMat = new THREE.MeshBasicMaterial({
+    color: trailColor,
+    transparent: true,
+    opacity: isRocket ? 0.6 : 0.8 // 0.8 для всех вражеских ракет
+  });
+  const particle = new THREE.Mesh(trailGeo, trailMat);
+  particle.position.copy(object.position);
+  scene.add(particle);
+  
+  const trailLife = isDivingRed ? 80 : (isScout ? 50 : (isRocket ? 60 : 30));
+  object.userData.trail.push({mesh: particle, life: trailLife});
+  trails.push(object.userData.trail[object.userData.trail.length-1]);
+}
+
 
 // === Controls (unchanged) ===
 let isDragging = false;
@@ -893,7 +1032,6 @@ function onPointerDown(event){
       previousMousePosition.x = event.clientX;
       previousMousePosition.y = event.clientY;
     } else if(event.button === 2){ 
-      // Добавлена крылатая ракета в список целей
       const threats = [...drones, ...missiles, ...cruiseMissiles];
       if(threats.length > 0){
         let target = threats[Math.floor(Math.random() * threats.length)];
@@ -925,7 +1063,6 @@ function onPointerMove(event){
 }
 function onPointerUp(event){
   if(isPotentialDrag){
-    // Добавлена крылатая ракета в список целей
     const threats = [...drones, ...missiles, ...cruiseMissiles];
     if(threats.length > 0){
       let target = threats[Math.floor(Math.random() * threats.length)];
@@ -946,30 +1083,28 @@ document.addEventListener("contextmenu",(e)=>e.preventDefault());
 // === Animate ===
 function animate(){
   requestAnimationFrame(animate);
+  
+  // Traffic
   updateCars();
   updatePeople();
   animateRadar();
 
-  // Spawn ballistic missile
+  // Spawn threats
   if(Date.now() - lastMissileTime > missileInterval){
     createMissile();
     lastMissileTime = Date.now();
   }
-  
-  // Spawn cruise missile
   if(Date.now() - lastCruiseMissileTime > cruiseMissileInterval){
     createCruiseMissile();
     lastCruiseMissileTime = Date.now();
   }
-
-  // Spawn scout every 8 seconds if under limit
   let scoutCount = drones.filter(d=>d.userData.type==="scout").length;
   if(Date.now() - lastScoutTime > 8000 && scoutCount < targetScoutDrones){
     createDrone("scout");
     lastScoutTime = Date.now();
   }
 
-  // Update drone toolbars
+  // Update Drone Toolbars (unchanged)
   for(const drone of drones){
     const altitude = Math.round(drone.position.y * 100);
     drone.userData.toolbar.textContent = `${altitude}m`;
@@ -982,12 +1117,11 @@ function animate(){
     drone.userData.toolbar.style.top = `${y - 20}px`;
   }
 
-  // Drones
+  // Drones (unchanged logic)
   for(let i=drones.length-1;i>=0;i--){
     const drone = drones[i];
     const data = drone.userData;
 
-    // Update scout drone direction periodically
     if(data.type === "scout" && Date.now() - data.lastDirectionChange > 2000){
       const destX = (Math.random()-0.5)*20;
       const destZ = (Math.random()-0.5)*20;
@@ -997,7 +1131,6 @@ function animate(){
       data.lastDirectionChange = Date.now();
     }
 
-    // Update red drone trajectory
     if(data.type === "red" && data.target){
       const distXZ = Math.sqrt((drone.position.x - data.target.position.x)**2 + (drone.position.z - data.target.position.z)**2);
       if(distXZ > 8 && !data.diving){
@@ -1021,7 +1154,6 @@ function animate(){
       }
     }
 
-    // Update future trajectory
     const futureSteps = data.type === "white" ? 60 : 50;
     const futurePoints = [];
     let currentPos = drone.position.clone();
@@ -1054,8 +1186,7 @@ function animate(){
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
       
       if(drone.position.distanceTo(targetPos)<0.1){
-        createExplosion(drone.position);
-        applyBlastDamage(drone.position, 2.0, false);
+        createExplosion(drone.position, "drone");
 
         if(!data.target.userData.isHit){
           createHouseMarker(data.target, false);
@@ -1080,14 +1211,13 @@ function animate(){
     } else {
       drone.position.add(data.direction.clone().multiplyScalar(data.speed));
       if(drone.position.y <= 0 || Math.abs(drone.position.x)>16 || Math.abs(drone.position.z)>16){
-        createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z));
-        applyBlastDamage(drone.position, 1.5, false);
+        createExplosion(new THREE.Vector3(drone.position.x, Math.max(drone.position.y,0), drone.position.z), "drone", 0.5); 
 
         scene.remove(drone);
-        if(data.toolbar && document.body.contains(data.toolbar)) document.body.removeChild(data.toolbar);
+        if(data.toolbar && document.body.contains(data.toolbar)) document.body.removeChild(drone.userData.toolbar);
         if(data.futureTrajectoryLine){
-          scene.remove(data.futureTrajectoryLine);
-          try{ data.futureTrajectoryLine.geometry.dispose(); data.futureTrajectoryLine.material.dispose(); }catch(e){}
+          scene.remove(drone.userData.futureTrajectoryLine);
+          try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
         }
         drones.splice(i,1);
       }
@@ -1097,14 +1227,41 @@ function animate(){
   // Ballistic Missiles
   for(let i = missiles.length - 1; i >= 0; i--){
     const missile = missiles[i];
+    const data = missile.userData;
+    
+    const timeElapsed = Date.now() - data.startTime;
+    const timeRemaining = data.fallTimeMs - timeElapsed;
+
+    // Активация маркера за 5 секунд (5000 мс) до удара
+    if(missile === missileToTrack && timeRemaining <= MARKER_DURATION && markerActive){
+        const progress = 1 - (timeRemaining / MARKER_DURATION); // 0 at start, 1 at impact
+        
+        // Масштаб: от INITIAL_MARKER_RADIUS до FINAL_MARKER_RADIUS
+        const scale = INITIAL_MARKER_RADIUS + (FINAL_MARKER_RADIUS - INITIAL_MARKER_RADIUS) * progress;
+        targetMarker.scale.setScalar(scale);
+
+        // Опасити: от 0.2 до 0.8 и затем до 0
+        let opacity;
+        if (progress < 0.8) {
+            opacity = 0.2 + (0.8 - 0.2) * (progress / 0.8);
+        } else {
+            opacity = 0.8 * (1 - (progress - 0.8) / 0.2); // Fade out quickly in last 20%
+        }
+        targetMarker.material.opacity = Math.max(0, opacity);
+    }
+    
     missile.position.y -= missile.userData.speed;
     addTrail(missile, true, false, false);
-    if(missile.position.y <= 0.5){
-      missile.userData.isFalling = true;
-    }
+    
     if(missile.position.y <= 0){
-      createExplosion(missile.position, 10, true);
-      applyBlastDamage(missile.position, 3, true);
+      createExplosion(data.targetPos, "missile");
+
+      // Сброс маркера
+      if(missile === missileToTrack){
+        targetMarker.scale.set(0, 0, 0);
+        markerActive = false;
+        missileToTrack = null;
+      }
 
       scene.remove(missile);
       try{ missile.geometry.dispose(); missile.material.dispose(); }catch(e){}
@@ -1120,25 +1277,14 @@ function animate(){
     if (data.t < 1) {
       data.t = Math.min(data.t + data.speed, 1);
       const newPos = data.curve.getPoint(data.t);
-      
-      // ИЗМЕНЕНИЕ 4: Убрана логика поворота для сферы
-      // if (data.t + data.speed < 1) {
-      //     const tangent = data.curve.getTangent(data.t + data.speed).normalize();
-      //     const rotation = new THREE.Quaternion().setFromUnitVectors(
-      //         new THREE.Vector3(0, 0, 1), 
-      //         tangent
-      //     );
-      //     missile.quaternion.slerp(rotation, 0.1); 
-      // }
-      
       missile.position.copy(newPos);
-      addTrail(missile, false, false, true); // Добавляем след
+      
+      // Используем trail для крылатых ракет (isCruise=true)
+      addTrail(missile, false, false, true); 
+      
     } else {
-      // Достигнута цель
-      createExplosion(missile.position, 5, true);
-      applyBlastDamage(missile.position, 2.5, true);
+      createExplosion(missile.position, "missile");
 
-      // Если была цель-дом, помечаем ее
       if(data.target && houses.includes(data.target)){
           createHouseMarker(data.target, true);
       }
@@ -1163,13 +1309,15 @@ function animate(){
     }
   }
 
-  // Maintain drone counts
+  // Maintain drone counts (unchanged)
   let whiteCount = drones.filter(d=>d.userData.type==="white").length;
   let redCount = drones.filter(d=>d.userData.type==="red").length;
+  let currentScoutCount = drones.filter(d=>d.userData.type==="scout").length;
+  
   if(whiteCount<targetWhiteDrones) createDrone("white");
   if(redCount<targetRedDrones) createDrone("red");
-
-  // Prevent exceeding limits
+  if(currentScoutCount < targetScoutDrones) createDrone("scout");
+  
   while(whiteCount > targetWhiteDrones){
     const drone = drones.find(d=>d.userData.type==="white");
     if(drone){
@@ -1196,13 +1344,25 @@ function animate(){
       redCount--;
     }
   }
+  while(currentScoutCount > targetScoutDrones){
+    const drone = drones.find(d=>d.userData.type==="scout");
+    if(drone){
+      scene.remove(drone);
+      if(drone.userData.toolbar && document.body.contains(drone.userData.toolbar)) document.body.removeChild(drone.userData.toolbar);
+      if(drone.userData.futureTrajectoryLine){
+        scene.remove(drone.userData.futureTrajectoryLine);
+        try{ drone.userData.futureTrajectoryLine.geometry.dispose(); drone.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
+      }
+      drones.splice(drones.indexOf(drone),1);
+      currentScoutCount--;
+    }
+  }
   
   // Rockets
   for(let i=rockets.length-1;i>=0;i--){
     const rocket = rockets[i];
     const target = rocket.userData.target;
     
-    // Включаем крылатые ракеты в проверку цели
     if(!target || (!drones.includes(target) && !missiles.includes(target) && !cruiseMissiles.includes(target))){
       scene.remove(rocket);
       try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
@@ -1228,21 +1388,28 @@ function animate(){
     addTrail(rocket, false, true, false);
 
     if(distanceToTarget < 0.1){
-      createExplosion(rocket.position);
-      applyBlastDamage(rocket.position, 2.0, false);
+      createExplosion(rocket.position, "rocket");
       
       scene.remove(rocket);
       try{ rocket.geometry.dispose(); rocket.material.dispose(); }catch(e){}
-
-      // Обработка уничтожения цели
+      rockets.splice(i,1);
+      
+      // Target destruction logic and score update
       if(missiles.includes(target)){
+        if(target === missileToTrack){
+            targetMarker.scale.set(0, 0, 0);
+            markerActive = false;
+            missileToTrack = null;
+        }
         scene.remove(target);
         try{ target.geometry.dispose(); target.material.dispose(); }catch(e){}
         missiles.splice(missiles.indexOf(target),1);
+        updateScore(1);
       } else if(cruiseMissiles.includes(target)){
         scene.remove(target);
         try{ target.geometry.dispose(); target.material.dispose(); }catch(e){}
         cruiseMissiles.splice(cruiseMissiles.indexOf(target),1);
+        updateScore(1);
       } else if(drones.includes(target)){
         scene.remove(target);
         if(target.userData.toolbar && document.body.contains(target.userData.toolbar)) document.body.removeChild(target.userData.toolbar);
@@ -1251,8 +1418,8 @@ function animate(){
           try{ target.userData.futureTrajectoryLine.geometry.dispose(); target.userData.futureTrajectoryLine.material.dispose(); }catch(e){}
         }
         drones.splice(drones.indexOf(target),1);
+        updateScore(1);
       }
-      rockets.splice(i,1);
     }
     if(Math.abs(rocket.position.x)>999||Math.abs(rocket.position.z)>999){
       scene.remove(rocket);
@@ -1264,7 +1431,6 @@ function animate(){
   renderer.render(scene,camera);
 }
 animate();
-updateScore();
 
 window.addEventListener("resize",()=>{
   camera.aspect=window.innerWidth/window.innerHeight;
