@@ -35,9 +35,9 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
-// ===== КОНФИГУРАЦИЯ =====
+/* ===== КОНФИГУРАЦИЯ ===== */
 const CHUNK_SIZE = 60;
-const RENDER_DIST = 3;
+const RENDER_DIST = 3; // Радиус прогрузки чанков
 const clock = new THREE.Clock();
 
 const scene = new THREE.Scene();
@@ -52,13 +52,14 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-// ===== СВЕТ И МАТЕРИАЛЫ =====
+/* ===== СВЕТ И ТЕКСТУРЫ ===== */
 scene.add(new THREE.AmbientLight(0x4040ff, 0.2));
 
 const flashlight = new THREE.SpotLight(0xffffff, 1.5, 150, Math.PI/4, 0.5, 1);
 scene.add(flashlight);
 scene.add(flashlight.target);
 
+// Создание текстуры окон
 const createWindowTexture = () => {
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
@@ -79,22 +80,14 @@ const createWindowTexture = () => {
 };
 
 const winTex = createWindowTexture();
-
 const matGround = new THREE.MeshStandardMaterial({ color: 0x111111 });
-const matBuild  = new THREE.MeshStandardMaterial({ 
+const matBuild = new THREE.MeshStandardMaterial({ 
     color: 0x222222, 
     map: winTex,
     emissive: 0x111111 
 });
-const matRoof = new THREE.MeshStandardMaterial({
-    color: 0x0a0a15,
-    roughness: 0.9,
-    metalness: 0.3,
-    emissive: 0x000814,
-    emissiveIntensity: 0.15
-});
 
-// ===== ИГРОК =====
+/* ===== ИГРОК ===== */
 const player = {
     pos: new THREE.Vector3(0, 15, 0),
     vel: new THREE.Vector3(),
@@ -102,7 +95,7 @@ const player = {
     speed: 40.0
 };
 
-// ===== ЧАНКИ =====
+/* ===== ГЕНЕРАЦИЯ МИРА ===== */
 const chunks = new Map();
 
 function createChunk(cx, cz) {
@@ -111,42 +104,25 @@ function createChunk(cx, cz) {
     const bz = cz * CHUNK_SIZE;
 
     // Земля
-    const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE),
-        matGround
-    );
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE), matGround);
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(bx + CHUNK_SIZE/2, 0, bz + CHUNK_SIZE/2);
     group.add(ground);
 
     // Здания
-    for(let i = 0; i < 12; i++) {
+    for(let i=0; i<12; i++) {
         const h = 10 + Math.random() * 50;
-        const w = 6 + Math.random() * 12;
-        const d = 6 + Math.random() * 12;
-
-        // Корпус
-        const geo = new THREE.BoxGeometry(w, h, d);
+        const w = 5 + Math.random() * 10;
+        const geo = new THREE.BoxGeometry(w, h, w);
+        // Смещаем UV, чтобы окна не растягивались
         const uv = geo.attributes.uv;
-        for(let j = 0; j < uv.count; j++) {
-            uv.setXY(j, uv.getX(j) * (w / 5), uv.getY(j) * (h / 10));
+        for(let j=0; j<uv.count; j++) {
+            uv.setXY(j, uv.getX(j) * (w/5), uv.getY(j) * (h/10));
         }
 
-        const body = new THREE.Mesh(geo, matBuild);
-        const buildingX = bx + Math.random() * (CHUNK_SIZE - w - 8) + 4;
-        const buildingZ = bz + Math.random() * (CHUNK_SIZE - d - 8) + 4;
-        body.position.set(buildingX, h/2, buildingZ);
-
-        // Крыша
-        const roofGeo = new THREE.BoxGeometry(w * 1.08, 1.4, d * 1.08);
-        const roof = new THREE.Mesh(roofGeo, matRoof);
-        roof.position.set(buildingX, h + 0.7, buildingZ);
-
-        const building = new THREE.Group();
-        building.add(body);
-        building.add(roof);
-
-        group.add(building);
+        const b = new THREE.Mesh(geo, matBuild);
+        b.position.set(bx + Math.random() * CHUNK_SIZE, h/2, bz + Math.random() * CHUNK_SIZE);
+        group.add(b);
     }
 
     scene.add(group);
@@ -157,75 +133,28 @@ function updateChunks() {
     const pCX = Math.floor(player.pos.x / CHUNK_SIZE);
     const pCZ = Math.floor(player.pos.z / CHUNK_SIZE);
 
-    // Удаляем старые
+    // Удаление далеких
     for (let [key, group] of chunks) {
         const [cx, cz] = key.split(',').map(Number);
         if (Math.abs(cx - pCX) > RENDER_DIST || Math.abs(cz - pCZ) > RENDER_DIST) {
             scene.remove(group);
-            group.children.forEach(c => { 
-                if (c.geometry) c.geometry.dispose(); 
-                if (c.material) c.material.dispose(); 
-            });
+            group.children.forEach(c => { if(c.geometry) c.geometry.dispose(); });
             chunks.delete(key);
         }
     }
 
-    // Создаём новые
+    // Создание новых
     for (let x = -RENDER_DIST; x <= RENDER_DIST; x++) {
         for (let z = -RENDER_DIST; z <= RENDER_DIST; z++) {
             const nx = pCX + x, nz = pCZ + z;
             const key = `${nx},${nz}`;
-            if (!chunks.has(key)) {
-                chunks.set(key, createChunk(nx, nz));
-            }
+            if (!chunks.has(key)) chunks.set(key, createChunk(nx, nz));
         }
     }
 }
 
-// ===== ПРОСТАЯ КОЛЛИЗИЯ =====
-function checkCollision(newPos) {
-    const playerRadius = 1.4;
-    const playerHeight = 1.8;
-    const playerFeet = 0.2;
-
-    for (let group of scene.children) {
-        if (!(group instanceof THREE.Group)) continue;
-
-        for (let building of group.children) {
-            if (!(building instanceof THREE.Group)) continue;
-
-            const body = building.children[0]; // корпус здания
-            if (!body || !body.geometry) continue;
-
-            if (!body.geometry.boundingBox) {
-                body.geometry.computeBoundingBox();
-            }
-
-            const bb = body.geometry.boundingBox.clone();
-            bb.applyMatrix4(body.matrixWorld);
-
-            const px = newPos.x;
-            const py = newPos.y;
-            const pz = newPos.z;
-
-            if (
-                px - playerRadius < bb.max.x &&
-                px + playerRadius > bb.min.x &&
-                pz - playerRadius < bb.max.z &&
-                pz + playerRadius > bb.min.z &&
-                py - playerHeight < bb.max.y &&
-                py + playerFeet > bb.min.y
-            ) {
-                return true; // столкновение
-            }
-        }
-    }
-    return false;
-}
-
-// ===== УПРАВЛЕНИЕ (touch) =====
+/* ===== УПРАВЛЕНИЕ ===== */
 let touchId = null, lastX, lastY;
-
 addEventListener('touchstart', e => {
     if (!e.target.closest('#joy, .btn')) {
         touchId = e.changedTouches[0].identifier;
@@ -240,83 +169,68 @@ addEventListener('touchmove', e => {
             player.rot.y -= (t.clientX - lastX) * 0.005;
             player.rot.x -= (t.clientY - lastY) * 0.005;
             player.rot.x = Math.max(-1.5, Math.min(1.5, player.rot.x));
-            lastX = t.clientX;
-            lastY = t.clientY;
+            lastX = t.clientX; lastY = t.clientY;
         }
     }
 }, {passive: false});
 
 const joyData = {x:0, y:0};
 const stick = document.getElementById('stick');
-
 document.getElementById('joy').ontouchmove = e => {
-    e.preventDefault();
     const t = e.touches[0], rect = e.currentTarget.getBoundingClientRect();
     const r = 50;
     let x = t.clientX - rect.left - r, y = t.clientY - rect.top - r;
-    const dist = Math.hypot(x, y);
-    if (dist > r) { x *= r/dist; y *= r/dist; }
-    stick.style.transform = `translate(${x}px, ${y}px)`;
-    joyData.x = x / r;
-    joyData.y = y / r;
+    const d = Math.hypot(x, y);
+    if(d > r) { x *= r/d; y *= r/d; }
+    stick.style.transform = `translate(${x}px,${y}px)`;
+    joyData.x = x/r; joyData.y = y/r;
 };
-
 document.getElementById('joy').ontouchend = () => {
-    joyData.x = 0; joyData.y = 0;
-    stick.style.transform = '';
+    joyData.x = 0; joyData.y = 0; stick.style.transform = '';
 };
 
 let moveUp = 0;
-document.getElementById('up').ontouchstart   = () => moveUp =  1;
-document.getElementById('up').ontouchend     = () => moveUp =  0;
+document.getElementById('up').ontouchstart = () => moveUp = 1;
+document.getElementById('up').ontouchend = () => moveUp = 0;
 document.getElementById('down').ontouchstart = () => moveUp = -1;
-document.getElementById('down').ontouchend   = () => moveUp =  0;
+document.getElementById('down').ontouchend = () => moveUp = 0;
 
-// ===== ОСНОВНОЙ ЦИКЛ =====
+/* ===== ЦИКЛ ===== */
 function animate() {
     const dt = clock.getDelta();
     requestAnimationFrame(animate);
 
-    // Направления
+    // Вектор направления взгляда для движения
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-    const right   = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-    forward.y = 0; right.y = 0;
-    forward.normalize(); right.normalize();
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+    forward.y = 0; right.y = 0; forward.normalize(); right.normalize();
 
     // Движение
     const moveVec = new THREE.Vector3()
-        .addScaledVector(forward, -joyData.y * 1.0)
-        .addScaledVector(right,   joyData.x  * 1.0)
-        .addScaledVector(new THREE.Vector3(0,1,0), moveUp * 0.8);
-
-    player.vel.lerp(moveVec.multiplyScalar(player.speed), 0.12);
-
-    const wishPos = player.pos.clone().addScaledVector(player.vel, dt);
-
-    // Проверка коллизии
-    if (!checkCollision(wishPos)) {
-        player.pos.copy(wishPos);
-    } else {
-        player.vel.multiplyScalar(0.35); // небольшое затухание при ударе о стену
-    }
-
-    // Камера и фонарик
+        .addScaledVector(forward, -joyData.y)
+        .addScaledVector(right, joyData.x)
+        .addScaledVector(new THREE.Vector3(0,1,0), moveUp);
+    
+    player.vel.lerp(moveVec.multiplyScalar(player.speed), 0.1);
+    player.pos.addScaledVector(player.vel, dt);
+    
     camera.position.copy(player.pos);
     camera.quaternion.setFromEuler(player.rot);
 
+    // Фонарик
     flashlight.position.copy(player.pos);
-    const lookDir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
-    flashlight.target.position.copy(player.pos).add(lookDir);
+    const dir = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion);
+    flashlight.target.position.copy(player.pos).add(dir);
 
     updateChunks();
     renderer.render(scene, camera);
 
     // UI
-    if (Math.random() > 0.92) {
+    if (Math.random() > 0.9) {
         document.getElementById('fps').textContent = Math.round(1/dt);
         document.getElementById('chunks').textContent = chunks.size;
         document.getElementById('pos').textContent = 
-            `${Math.round(player.pos.x)}, ${Math.round(player.pos.y)}, ${Math.round(player.pos.z)}`;
+            `${player.pos.x.toFixed(0)}, ${player.pos.y.toFixed(0)}, ${player.pos.z.toFixed(0)}`;
     }
 }
 
